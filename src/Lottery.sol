@@ -78,9 +78,11 @@ contract Lottery {
     function claim() public {
         require(game_state == 2);
         require(reward_state[msg.sender] == false);
-        require((reward / winner_number) <= address(this).balance);
+       
 
         if(winner_number > 0 && reward_number > 0) {
+            require((reward / winner_number) <= address(this).balance);
+
             payable(msg.sender).call{value: reward / winner_number}(""); 
 
             reward_state[msg.sender];
