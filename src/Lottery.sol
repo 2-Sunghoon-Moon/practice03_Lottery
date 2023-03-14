@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 import "forge-std/console.sol";
@@ -7,120 +6,115 @@ import "forge-std/console.sol";
 pragma solidity ^0.8.0;
 
 contract Lottery {
-    address payable[] public players; // 참여자 주소를 담을 배열
+    uint256 public constant GAME_INTERVAL = 24 hours;
 
-    mapping(address => bool) public bets; // 참가여부를 저장하는 배열
+    uint8 game_state;                                      // 0: 대기 1: 참가진행 2: 결과추출 3: 금액뽑기
+    uint256 public start_time;                             // 게임 시작시간을 의미한다.
 
+    address[] public participants;
+    mapping(address => bool) public participation_state;   // 게임참가 여부를 저장하는 배열
+    mapping(address => uint16) public player_bet_numbers;  // 플레이어가 베잍한 숫자를 기재하기 위함
 
-    address public manager; // 관리자 주소
-    uint16 public winningNumber; // 당첨 번호
-    bool public phase; // 게임 진행여부
-    bool public isDrawn; // 당첨 번호를 뽑았는지 여부
-    
+    uint256 reward;
 
-    uint256 public nextDrawTime;
-    uint256 public constant DRAW_INTERVAL = 24 hours;
-
-
-    mapping(address => uint16) public betNumbers;
-
-
-    uint256 public startTime;
+    uint16 public winningNumber;                           // 당첨 번호        
+    address[] public winners;
+    uint256 public winner_number = 0;
+    uint256 public reward_number = 0;
 
 
-    bool public claimState = false; 
+    mapping(address => bool) reward_state;
 
-    bool public gameState = true;
-
-
-    //
-    mapping(address => bool) public bettingState;
-
-
-    uint16[] public answer;
-
-
-    uint256 sendCount = 0;
-
-
-    uint256 money = 0;
-
-
-    constructor() {
-        manager = msg.sender; // 컨트랙트 생성자가 호출한 계정을 관리자로 지정
-        startTime = block.timestamp;
-
-        console.log("startTime: ", block.timestamp);
-    }
-    
     function buy(uint16 betNumber) public payable {
-        require(msg.value == 0.1 ether, "only 0.1 ether");
-        require(block.timestamp < startTime + DRAW_INTERVAL); // 구매하는 시간이 시작 시간보다 24시간 이내여야한다.
-        require(bettingState[msg.sender] == false, "only 1 bet");
+        require(game_state == 0 || game_state == 1);
+        require(participation_state[msg.sender] == false);
+        require(msg.value == 0.1 ether);
 
-        bettingState[address(msg.sender)] = true;
-        betNumbers[address(msg.sender)] = betNumber;
-
-        money += msg.value;
-
-
-        answer.push(betNumber);
-    }
-    
-    function claim() public {
-        console.log("[+] claim()");
-        console.log(block.timestamp);
-        console.log(startTime);
-        // console.log("    msg.sender: ", msg.sender);
-        require(block.timestamp >= startTime + DRAW_INTERVAL, "Time Error");
-        
-        
-        uint256 answerCount = 0;
-
-        for(uint i=0; i<answer.length; i++) {
-            if(winningNumber == answer[i]) {
-                answerCount = answerCount + 1;
-            }
+        if(game_state == 1) {
+            require(block.timestamp < start_time + GAME_INTERVAL);
         }
 
-
-        
-
-        if (betNumbers[address(msg.sender)] == winningNumber) {
-            payable(msg.sender).call{value: splitMoney()}(""); //  address(this).balance
-
-            sendCount = sendCount + 1;
+        if(game_state == 0) {
+            game_state = 1;
+            start_time = block.timestamp;
         }
 
-        // 초기화
-        if(sendCount == answerCount) {
-            startTime = block.timestamp;
-            sendCount = 0;
-        }
-        
-        bettingState[msg.sender] = false;
-        claimState = false;
-    }
-    
+        participants.push(msg.sender);
+        participation_state[msg.sender] = true;
+        player_bet_numbers[msg.sender] = betNumber;
 
-    function splitMoney() public returns (uint256) {
-        uint256 answerCount = 0;
-
-        for(uint i=0; i<answer.length; i++) {
-            if(winningNumber == answer[i]) {
-                answerCount = answerCount + 1;
-            }
-        }
-
-
-        return (money / answerCount);
-
+        reward += msg.value;
     }
 
 
     function draw() public {
-        // [1] 정답 추출시 
-        require(startTime + DRAW_INTERVAL <= block.timestamp);
-        require(claimState == false);
+        console.log("[+] draw()");
+        console.log("    block.timestamp: ", block.timestamp);
+        console.log("    start_time: ", start_time);
+        require(game_state == 1);
+        require(start_time + GAME_INTERVAL <= block.timestamp);
+
+        bytes memory randomInput = abi.encode(block.number, msg.sender);
+        bytes32 hash = keccak256(randomInput);
+        winningNumber = uint16(uint256(hash) % (uint256(1) << 16));
+
+
+        game_state = 2;
+
+        for (uint i = 0; i < participants.length; i++) {
+            address participant = participants[i];
+            uint16 bet_number = player_bet_numbers[participant];
+
+            if(winningNumber == bet_number) {
+                winners.push(participant);
+
+                winner_number += 1;
+                reward_number += 1;
+            }
+        }
+    }
+
+
+    function claim() public {
+        require(game_state == 2);
+        require(reward_state[msg.sender] == false);
+
+        if(winner_number > 0) {
+            require((reward / winner_number) <= address(this).balance);
+
+
+            payable(msg.sender).call{value: reward / winner_number}(""); 
+
+            reward_state[msg.sender];
+            reward_number = reward_number - 1;
+        }
+
+
+        if(reward_number == 0) {
+            game_state = 0;                                      // 0: 대기 1: 참가진행 2: 결과추출 3: 금액뽑기
+
+            participants;
+
+            for(uint i=0; i<participants.length; i++) {
+                delete participation_state[participants[i]];
+                delete player_bet_numbers[participants[i]];
+            }
+
+            delete participants;
+
+
+            winningNumber = 0;                           // 당첨 번호        
+            
+            winner_number = 0;
+            reward_number = 0;
+
+
+            for(uint i=0; i<winners.length; i++) {
+                delete reward_state[winners[i]];
+            }
+
+            delete winners;
+        }
+
     }
 }
